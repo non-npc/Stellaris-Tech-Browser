@@ -1,6 +1,7 @@
 # Stellaris Tech Browser
 
 A Python + PyQt6 desktop application that scans a Stellaris installation and optional mods folder, parses technology data into SQLite, and provides a desktop browser for searching and inspecting the tech graph.
+It also identifies issues and collisions in the techtree.
 
 ## Features
 
@@ -73,10 +74,4 @@ The generated SQLite DB includes tables for:
 - warnings
 - technology_search (FTS5)
 
-## Suggested Future Upgrades
 
-- Better mod load-order handling via `descriptor.mod`
-- Recursive dependency graph panel inside the UI
-- Incremental rescans for unchanged files
-- More precise unlock detection rules per Stellaris content type
-- Embedded HTML graph view using Cytoscape.js or Vis Network
