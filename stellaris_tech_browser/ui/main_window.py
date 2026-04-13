@@ -1,10 +1,12 @@
 from __future__ import annotations
-import sys
+
+import configparser
 import sqlite3
+import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt6.QtCore import QSettings, QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -36,10 +38,6 @@ from ..exporters import export_json_from_db
 from ..scanner import StellarisTechScanner
 
 
-APP_NAME = 'stellaris_tech_browser'
-SETTINGS_FILENAME = f'{APP_NAME}.ini'
-
-
 class ScanWorker(QThread):
     progress_changed = pyqtSignal(int, str, str)
     finished_ok = pyqtSignal(str)
@@ -69,9 +67,9 @@ class ScanWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.app_dir = Path(sys.argv[0]).resolve().parent
-        self.settings_path = self.app_dir / SETTINGS_FILENAME
-        self.settings = QSettings(str(self.settings_path), QSettings.Format.IniFormat)
+        self.settings_path = self._get_settings_path()
+        self.settings = configparser.ConfigParser()
+        self._load_settings()
 
         self.setWindowTitle('Stellaris Tech Browser')
         self.resize(1400, 900)
@@ -90,55 +88,61 @@ class MainWindow(QMainWindow):
         self._build_scan_tab()
         self._build_browser_tab()
         self._build_menu()
-        self._load_settings()
-        self._auto_open_saved_database()
+        self._apply_saved_settings()
 
-    def _default_db_path(self) -> Path:
-        return self.app_dir / 'stellaris_tech.db'
-
-    def _save_settings(self) -> None:
-        self.settings.setValue('paths/game_folder', self.game_path_edit.text().strip())
-        self.settings.setValue('paths/mods_folder', self.mods_path_edit.text().strip())
-        self.settings.setValue('paths/database', self.db_path_edit.text().strip())
-        self.settings.setValue('general/language', self.language_combo.currentText())
-        self.settings.sync()
+    def _get_settings_path(self) -> Path:
+        app_dir = Path(sys.argv[0]).resolve().parent
+        return app_dir / 'stellaris_tech_browser.ini'
 
     def _load_settings(self) -> None:
-        self.game_path_edit.setText(str(self.settings.value('paths/game_folder', '', str)))
-        self.mods_path_edit.setText(str(self.settings.value('paths/mods_folder', '', str)))
-        db_value = str(self.settings.value('paths/database', str(self._default_db_path()), str))
-        self.db_path_edit.setText(db_value)
-        language = str(self.settings.value('general/language', 'english', str))
-        index = self.language_combo.findText(language)
-        if index >= 0:
-            self.language_combo.setCurrentIndex(index)
+        if self.settings_path.exists():
+            self.settings.read(self.settings_path, encoding='utf-8')
+        if 'paths' not in self.settings:
+            self.settings['paths'] = {}
 
-    def _database_has_results(self, path: Path) -> bool:
-        if not path.exists() or not path.is_file():
-            return False
+    def _save_settings(self) -> None:
+        self.settings['paths']['game_folder'] = self.game_path_edit.text().strip()
+        self.settings['paths']['mods_folder'] = self.mods_path_edit.text().strip()
+        self.settings['paths']['database_output'] = self.db_path_edit.text().strip()
+        self.settings['paths']['language'] = self.language_combo.currentText()
+        self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.settings_path.open('w', encoding='utf-8') as handle:
+            self.settings.write(handle)
+
+    def _apply_saved_settings(self) -> None:
+        paths = self.settings['paths']
+        self.game_path_edit.setText(paths.get('game_folder', ''))
+        self.mods_path_edit.setText(paths.get('mods_folder', ''))
+        default_db = str(Path(self.settings_path).resolve().parent / 'stellaris_tech.db')
+        self.db_path_edit.setText(paths.get('database_output', default_db))
+        language = paths.get('language', 'english')
+        idx = self.language_combo.findText(language)
+        if idx >= 0:
+            self.language_combo.setCurrentIndex(idx)
+
+        saved_db = Path(self.db_path_edit.text().strip()) if self.db_path_edit.text().strip() else None
+        if saved_db and saved_db.exists() and self._database_has_technologies(saved_db):
+            self.open_database(saved_db)
+
+    def _database_has_technologies(self, path: Path) -> bool:
         try:
-            with sqlite3.connect(path) as conn:
-                row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='technologies'").fetchone()
-                if not row:
-                    return False
-                count = conn.execute('SELECT COUNT(*) FROM technologies').fetchone()[0]
-                return count > 0
+            conn = sqlite3.connect(path)
+            try:
+                row = conn.execute("SELECT COUNT(*) FROM technologies").fetchone()
+                return bool(row and row[0] > 0)
+            finally:
+                conn.close()
         except sqlite3.Error:
             return False
 
-    def _auto_open_saved_database(self) -> None:
-        candidates = []
-        saved_path = self.db_path_edit.text().strip()
-        if saved_path:
-            candidates.append(Path(saved_path))
-        default_path = self._default_db_path()
-        if default_path not in candidates:
-            candidates.append(default_path)
-        for candidate in candidates:
-            if self._database_has_results(candidate):
-                self.open_database(candidate)
-                self.tabs.setCurrentWidget(self.browser_tab)
-                break
+    def _format_source_label(self, source_type: Optional[str], mod_name: Optional[str]) -> str:
+        if mod_name:
+            if mod_name.isdigit():
+                return f"Workshop {mod_name}"
+            return mod_name
+        if source_type == 'vanilla':
+            return 'Vanilla'
+        return source_type or ''
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu('&File')
@@ -162,6 +166,9 @@ class MainWindow(QMainWindow):
         self.language_combo = QComboBox()
         self.language_combo.addItems(['english', 'french', 'german', 'spanish', 'russian'])
         self.language_combo.currentTextChanged.connect(lambda _text: self._save_settings())
+        self.game_path_edit.editingFinished.connect(self._save_settings)
+        self.mods_path_edit.editingFinished.connect(self._save_settings)
+        self.db_path_edit.editingFinished.connect(self._save_settings)
 
         browse_game = QPushButton('Browse...')
         browse_game.clicked.connect(lambda: self._pick_folder(self.game_path_edit))
@@ -213,6 +220,12 @@ class MainWindow(QMainWindow):
         self.rare_only = QCheckBox('Rare only')
         self.refresh_button = QPushButton('Refresh Results')
         self.refresh_button.clicked.connect(self.refresh_table)
+        self.search_edit.returnPressed.connect(self.refresh_table)
+        self.area_combo.currentIndexChanged.connect(self.refresh_table)
+        self.tier_combo.currentIndexChanged.connect(self.refresh_table)
+        self.source_combo.currentIndexChanged.connect(self.refresh_table)
+        self.repeatable_only.stateChanged.connect(self.refresh_table)
+        self.rare_only.stateChanged.connect(self.refresh_table)
 
         grid.addWidget(QLabel('Search'), 0, 0)
         grid.addWidget(self.search_edit, 0, 1, 1, 3)
@@ -267,7 +280,7 @@ class MainWindow(QMainWindow):
             self._save_settings()
 
     def choose_database(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, 'Open Database', self.db_path_edit.text() or str(self.app_dir), 'SQLite DB (*.db *.sqlite)')
+        path, _ = QFileDialog.getOpenFileName(self, 'Open Database', str(Path.home()), 'SQLite DB (*.db *.sqlite)')
         if not path:
             return
         self.open_database(Path(path))
@@ -300,8 +313,6 @@ class MainWindow(QMainWindow):
     def on_scan_complete(self, db_path: str) -> None:
         self.scan_button.setEnabled(True)
         self.current_db_path = Path(db_path)
-        self.db_path_edit.setText(db_path)
-        self._save_settings()
         self.scan_log.appendPlainText(f'Completed: {db_path}')
         self.open_database(Path(db_path))
         self.tabs.setCurrentWidget(self.browser_tab)
@@ -317,9 +328,9 @@ class MainWindow(QMainWindow):
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.current_db_path = path
+        self.setWindowTitle(f'Stellaris Tech Browser - {path.name}')
         self.db_path_edit.setText(str(path))
         self._save_settings()
-        self.setWindowTitle(f'Stellaris Tech Browser - {path.name}')
         self.populate_filter_values()
         self.refresh_table()
 
@@ -336,8 +347,9 @@ class MainWindow(QMainWindow):
             self.area_combo.addItem(row['area'])
         for row in self.conn.execute('SELECT DISTINCT tier FROM technologies WHERE tier IS NOT NULL ORDER BY tier'):
             self.tier_combo.addItem(str(row['tier']))
-        for row in self.conn.execute('SELECT DISTINCT COALESCE(mod_name, source_type) AS label FROM technologies t LEFT JOIN sources s ON t.source_id=s.id ORDER BY label'):
-            self.source_combo.addItem(row['label'])
+        source_rows = self.conn.execute('SELECT DISTINCT s.source_type, s.mod_name FROM technologies t LEFT JOIN sources s ON t.source_id=s.id ORDER BY COALESCE(s.mod_name, s.source_type)').fetchall()
+        for row in source_rows:
+            self.source_combo.addItem(self._format_source_label(row['source_type'], row['mod_name']))
         self.area_combo.blockSignals(False)
         self.tier_combo.blockSignals(False)
         self.source_combo.blockSignals(False)
@@ -358,7 +370,7 @@ class MainWindow(QMainWindow):
             where.append('t.tier = ?')
             params.append(int(self.tier_combo.currentText()))
         if self.source_combo.currentText() != 'All Sources':
-            where.append('COALESCE(s.mod_name, s.source_type) = ?')
+            where.append("""CASE WHEN s.mod_name IS NOT NULL AND s.mod_name <> '' THEN CASE WHEN s.mod_name GLOB '[0-9]*' THEN 'Workshop ' || s.mod_name ELSE s.mod_name END WHEN s.source_type = 'vanilla' THEN 'Vanilla' ELSE s.source_type END = ?""")
             params.append(self.source_combo.currentText())
         if self.repeatable_only.isChecked():
             where.append('t.is_repeatable = 1')
@@ -366,7 +378,12 @@ class MainWindow(QMainWindow):
             where.append('t.is_rare = 1')
         sql = '''
             SELECT t.id, t.tech_key, t.display_name, t.area, t.tier,
-                   COALESCE(s.mod_name, s.source_type) AS source_label,
+                   CASE
+                       WHEN s.mod_name IS NOT NULL AND s.mod_name <> '' AND s.mod_name GLOB '[0-9]*' THEN 'Workshop ' || s.mod_name
+                       WHEN s.mod_name IS NOT NULL AND s.mod_name <> '' THEN s.mod_name
+                       WHEN s.source_type = 'vanilla' THEN 'Vanilla'
+                       ELSE COALESCE(s.source_type, '')
+                   END AS source_label,
                    (SELECT COUNT(*) FROM technology_prerequisites tp WHERE tp.tech_id = t.id) AS prereq_count,
                    (SELECT COUNT(*) FROM technology_prerequisites tp WHERE tp.prerequisite_tech_id = t.id) AS unlock_count,
                    GROUP_CONCAT(tc.category, ', ') AS categories
@@ -378,6 +395,8 @@ class MainWindow(QMainWindow):
             sql += ' WHERE ' + ' AND '.join(where)
         sql += ' GROUP BY t.id ORDER BY t.area, t.tier, t.display_name'
         rows = self.conn.execute(sql, params).fetchall()
+        self.table.setSortingEnabled(False)
+        self.table.clearContents()
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             values = [
@@ -395,8 +414,15 @@ class MainWindow(QMainWindow):
                 if c == 0:
                     item.setData(256, row['id'])
                 self.table.setItem(r, c, item)
+        self.table.resizeColumnsToContents()
+        self.table.setSortingEnabled(True)
         if rows:
             self.table.selectRow(0)
+        else:
+            self.detail_header.setText('No technology selected')
+            self.detail_body.clear()
+            self.raw_body.clear()
+            self.warnings_body.clear()
 
     def load_selected_tech(self) -> None:
         if not self.conn:
@@ -408,7 +434,14 @@ class MainWindow(QMainWindow):
         tech_id = self.table.item(row, 0).data(256)
         tech = self.conn.execute(
             '''
-            SELECT t.*, COALESCE(s.mod_name, s.source_type) AS source_label, s.root_path, f.relative_path
+            SELECT t.*,
+                   CASE
+                       WHEN s.mod_name IS NOT NULL AND s.mod_name <> '' AND s.mod_name GLOB '[0-9]*' THEN 'Workshop ' || s.mod_name
+                       WHEN s.mod_name IS NOT NULL AND s.mod_name <> '' THEN s.mod_name
+                       WHEN s.source_type = 'vanilla' THEN 'Vanilla'
+                       ELSE COALESCE(s.source_type, '')
+                   END AS source_label,
+                   s.root_path, f.relative_path
             FROM technologies t
             LEFT JOIN sources s ON t.source_id = s.id
             LEFT JOIN files f ON t.file_id = f.id
@@ -454,7 +487,7 @@ class MainWindow(QMainWindow):
         self.detail_body.setHtml('<br><br>'.join(detail))
         self.raw_body.setPlainText(tech['raw_block_json'] or '')
 
-        warnings = [f"[{r['severity']}] {r['warning_type']}: {r['message']}" for r in self.conn.execute('SELECT severity, warning_type, message FROM warnings ORDER BY id DESC LIMIT 250')]
+        warnings = [f"[{r['severity']}] {r['warning_type']}: {r['message']}" for r in self.conn.execute('SELECT severity, warning_type, message FROM warnings WHERE tech_id = ? OR tech_id IS NULL ORDER BY id DESC LIMIT 250', (tech_id,))]
         self.warnings_body.setPlainText('\n'.join(warnings))
 
     def export_json(self) -> None:
