@@ -1,111 +1,51 @@
-=========================
+__pycache__/
+*.py[cod]
 
-Python cache / bytecode
+venv/
+.env/
+.venv/
+env/
+ENV/
 
-=========================
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
 
-pycache/ .py[cod] $py.class
+.vscode/
+.idea/
 
-=========================
+.DS_Store
+Thumbs.db
+desktop.ini
 
-Virtual environments
+*.log
+logs/
 
-=========================
+*.db
+*.sqlite
+*.sqlite3
 
-venv/ .env/ .venv/ env/ ENV/
+exports/
+output/
+*.json
 
-=========================
+*.tmp
+*.temp
+*.bak
 
-Python packaging artifacts
+*.pyd
+*.so
 
-=========================
+config.local.json
+settings.local.json
 
-build/ dist/ *.egg-info/ .eggs/ pip-wheel-metadata/
+sample_data/
+test_output/
 
-=========================
+graph_cache/
+viewer_cache/
 
-IDE / Editor settings
-
-=========================
-
-.vscode/ .idea/ .sublime-project .sublime-workspace
-
-=========================
-
-OS files
-
-=========================
-
-.DS_Store Thumbs.db desktop.ini
-
-=========================
-
-Logs
-
-=========================
-
-*.log logs/
-
-=========================
-
-SQLite databases (scanner output)
-
-=========================
-
-.db .sqlite *.sqlite3
-
-=========================
-
-Exported data
-
-=========================
-
-exports/ output/ *.json
-
-=========================
-
-Temporary files
-
-=========================
-
-.tmp .temp *.bak
-
-=========================
-
-PyQt build artifacts
-
-=========================
-
-.pyd .so
-
-=========================
-
-Local user configuration
-
-=========================
-
-config.local.json settings.local.json
-
-=========================
-
-Test / sample scan data
-
-=========================
-
-sample_data/ test_output/
-
-=========================
-
-Graph viewer caches
-
-=========================
-
-graph_cache/ viewer_cache/
-
-=========================
-
-PyInstaller / frozen builds
-
-=========================
-
-*.spec __pyinstaller/ build/ dist/
+*.spec
+__pyinstaller/
